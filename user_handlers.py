@@ -392,18 +392,18 @@ async def amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         admin_id = ADMIN_ID
         admin_text = (
-        f"🚨 **طلب سحب جديد!** `#{w_id}`\n\n"
-        f"👤 المستخدم: {update.effective_user.first_name} (`{user_id}`)\n"
-        f"💳 طريقة الدفع: **{method}**\n"
-        f"📌 الحساب/المحفظة: `{account}`\n"
-        f"💰 المبلغ المطلوب: `${amount:.2f}`"
-    )
-    admin_keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("موافقة ✅", callback_data=f"approve_w_{w_id}"),
-            InlineKeyboardButton("رفض ❌", callback_data=f"reject_w_{w_id}")
-        ]
-    ])
+            f"🚨 **طلب سحب جديد!** `#{w_id}`\n\n"
+            f"👤 المستخدم: {update.effective_user.first_name} (`{user_id}`)\n"
+            f"💳 طريقة الدفع: **{method}**\n"
+            f"📌 الحساب/المحفظة: `{account}`\n"
+            f"💰 المبلغ المطلوب: `${amount:.2f}`"
+        )
+        admin_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("موافقة ✅", callback_data=f"approve_w_{w_id}"),
+                InlineKeyboardButton("رفض ❌", callback_data=f"reject_w_{w_id}")
+            ]
+        ])
         await context.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="Markdown", reply_markup=admin_keyboard)
     except Exception as e:
         logger.error(f"Failed to notify admin about withdrawal request #{w_id}: {e}")
