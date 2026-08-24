@@ -33,6 +33,14 @@ def init_db(db_path: str = DATABASE_PATH):
         )
     """)
 
+    # Auto-migration for existing databases missing new columns
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "captcha_verified" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN captcha_verified INTEGER DEFAULT 0")
+    if "last_daily_bonus" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN last_daily_bonus TIMESTAMP")
+
     # Settings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
