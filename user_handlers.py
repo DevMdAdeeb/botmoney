@@ -306,6 +306,22 @@ async def claim_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = query.from_user.id
 
     task_id = int(query.data.replace("claim_task_", ""))
+
+    # Check if task has a channel requirement
+    tasks = database.get_all_tasks()
+    task = next((t for t in tasks if t["id"] == task_id), None)
+
+    if task and task.get("chat_id"):
+        chat_id = task["chat_id"].strip()
+        if chat_id:
+            try:
+                member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+                if member.status not in ["creator", "administrator", "member"]:
+                    await query.answer("❌ لم تقم بالاشتراك في القناة بعد! اشترك أولاً لتأكيد المهمة واستلام المكافأة.", show_alert=True)
+                    return
+            except Exception as e:
+                logger.warning(f"Failed to check sub for task {task_id} in {chat_id}: {e}")
+
     success, msg, amount = database.complete_task(user_id, task_id)
 
     await query.answer(msg, show_alert=True)

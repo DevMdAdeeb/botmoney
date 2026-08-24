@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
     ADD_GIFT_MAX,
     ADD_TASK_TITLE,
     ADD_TASK_REWARD,
-    ADD_TASK_LINK
-) = range(23)
+    ADD_TASK_LINK,
+    ADD_TASK_CHAT_ID
+) = range(24)
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
@@ -414,11 +415,21 @@ async def task_reward_entered(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def task_link_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = update.message.text.strip()
+    context.user_data["add_task_link"] = link
+    await update.message.reply_text("📢 **أدخل معرّف القناة للتحقق من الاشتراك تلقائياً** (مثال: `@mychannel` أو المعرف الرقمي `-100123...`) أو أرسل `تخطي` إذا لم تكن المهمة قناة:")
+    return ADD_TASK_CHAT_ID
+
+async def task_chat_id_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.text.strip()
+    if chat_id == "تخطي":
+        chat_id = None
+
     title = context.user_data.get("add_task_title")
     reward = context.user_data.get("add_task_reward")
+    link = context.user_data.get("add_task_link")
 
-    database.add_task(title, reward, link)
-    await update.message.reply_text(f"✅ تم إضافة المهمة **{title}** بنجاح!", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
+    database.add_task(title, reward, link, chat_id=chat_id)
+    await update.message.reply_text(f"✅ تم إضافة المهمة **{title}** مع نظام التحقق التلقائي بنجاح!", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
     return ConversationHandler.END
 
 # --- Mandatory Channels Management ---

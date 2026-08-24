@@ -146,7 +146,8 @@ def main():
         states={
             admin_handlers.ADD_TASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_title_entered)],
             admin_handlers.ADD_TASK_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_reward_entered)],
-            admin_handlers.ADD_TASK_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_link_entered)]
+            admin_handlers.ADD_TASK_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_link_entered)],
+            admin_handlers.ADD_TASK_CHAT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_chat_id_entered)]
         },
         fallbacks=[CommandHandler("cancel", admin_handlers.cancel_admin_conv)],
         per_message=False
