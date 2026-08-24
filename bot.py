@@ -20,6 +20,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def main():
+    if not BOT_TOKEN:
+        print("\n❌ خطأ: لم يتم العثور على توكن البوت (BOT_TOKEN)!")
+        print("يرجى إنشاء ملف باسم `.env` وتحديد التوكن فيه كالتالي:")
+        print("BOT_TOKEN=8853882776:AAHLzNgfwkj187LXWSGMnpgrj4wDhMV6oqU")
+        print("ADMIN_ID=873649941\n")
+        return
+
     # Initialize SQLite Database
     database.init_db()
     logger.info("Database initialized successfully.")
