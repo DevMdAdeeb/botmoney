@@ -239,16 +239,53 @@ def claim_daily_bonus(user_id: int, bonus_amount: float, db_path: str = DATABASE
     conn.close()
     return affected
 
-def can_claim_daily_bonus(user_id: int, db_path: str = DATABASE_PATH) -> bool:
+def get_daily_bonus_time_status(user_id: int, db_path: str = DATABASE_PATH) -> Tuple[bool, str]:
+    """
+    Checks if user can claim daily bonus.
+    Returns (can_claim: bool, remaining_time_str: str)
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT last_daily_bonus FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row or not row[0]:
+        return True, ""
+
+    # Calculate time passed since last bonus
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT 1 FROM users
-        WHERE user_id = ?
-        AND (last_daily_bonus IS NULL OR datetime(last_daily_bonus, '+1 day') <= datetime('now'))
+        SELECT
+            (strftime('%s', 'now') - strftime('%s', last_daily_bonus)) AS seconds_passed
+        FROM users WHERE user_id = ?
     """, (user_id,))
-    can_claim = cursor.fetchone() is not None
+    res = cursor.fetchone()
     conn.close()
+
+    if not res or res[0] is None:
+        return True, ""
+
+    seconds_passed = res[0]
+    total_day_seconds = 24 * 3600
+
+    if seconds_passed >= total_day_seconds:
+        return True, ""
+
+    remaining_seconds = total_day_seconds - seconds_passed
+    hours = remaining_seconds // 3600
+    minutes = (remaining_seconds % 3600) // 60
+
+    if hours > 0:
+        time_str = f"{hours} ساعة و {minutes} دقيقة"
+    else:
+        time_str = f"{minutes} دقيقة"
+
+    return False, time_str
+
+def can_claim_daily_bonus(user_id: int, db_path: str = DATABASE_PATH) -> bool:
+    can_claim, _ = get_daily_bonus_time_status(user_id, db_path)
     return can_claim
 
 def get_top_referrers(limit: int = 10, db_path: str = DATABASE_PATH) -> List[dict]:

@@ -46,11 +46,20 @@ def get_mandatory_sub_keyboard(unsubscribed_channels: List[dict]) -> InlineKeybo
 
 def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     keyboard = [
-        [InlineKeyboardButton("💰 رصيدي وحسابي", callback_data="user_profile"), InlineKeyboardButton("🔗 رابط الإحالة", callback_data="user_referral")],
-        [InlineKeyboardButton("🎯 المهام اليومية", callback_data="user_tasks"), InlineKeyboardButton("🎁 كود الهدية", callback_data="enter_gift_code")],
+        [InlineKeyboardButton("💰 رصيدي وحسابي", callback_data="user_profile"), InlineKeyboardButton("🔗 رابط الإحالة", callback_data="user_referral")]
+    ]
+
+    # Check if there are available tasks for user
+    available_tasks = database.get_available_tasks_for_user(user_id)
+    if available_tasks:
+        keyboard.append([InlineKeyboardButton("🎯 المهام اليومية", callback_data="user_tasks"), InlineKeyboardButton("🎁 كود الهدية", callback_data="enter_gift_code")])
+    else:
+        keyboard.append([InlineKeyboardButton("🎁 كود الهدية", callback_data="enter_gift_code")])
+
+    keyboard.extend([
         [InlineKeyboardButton("🎁 المكافأة اليومية", callback_data="daily_bonus"), InlineKeyboardButton("🏆 أوائل الداعين", callback_data="leaderboard")],
         [InlineKeyboardButton("💳 طلب سحب", callback_data="user_withdraw"), InlineKeyboardButton("ℹ️ طرق الدفع المتاحة", callback_data="user_payment_methods")]
-    ]
+    ])
 
     custom_btns = database.get_all_custom_buttons()
     row = []
@@ -311,8 +320,9 @@ async def daily_bonus_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("⚠️ المكافأة اليومية غير مفعلة حالياً من قبل المدير.", show_alert=True)
         return
 
-    if not database.can_claim_daily_bonus(user.id):
-        await query.answer("⏳ لقد استلمت مكافأتك اليومية بالفعل! عد بعد 24 ساعة.", show_alert=True)
+    can_claim, time_remaining_str = database.get_daily_bonus_time_status(user.id)
+    if not can_claim:
+        await query.answer(f"⏳ تم استلام المكافأة اليومية سابقاً! عد بعد: {time_remaining_str}", show_alert=True)
         return
 
     bonus_amount = float(database.get_setting("daily_bonus_amount", "0.05"))
@@ -322,10 +332,10 @@ async def daily_bonus_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     user_data = database.get_user(user.id)
     text = (
-        f"🎁 **تم استلام المكافأة اليومية!**\n\n"
+        f"🎁 **تم استلام المكافأة اليومية بنجاح!**\n\n"
         f"💰 القيمة: `${bonus_amount:.2f}`\n"
         f"💳 رصيدك الحالي: `${user_data['balance']:.2f}`\n\n"
-        f"يمكنك العودة غداً لاستلام المكافأة القادمة 🚀"
+        f"يمكنك العودة بعد 24 ساعة لاستلام المكافأة القادمة 🚀"
     )
     keyboard = [[InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
