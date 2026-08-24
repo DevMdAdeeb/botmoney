@@ -150,6 +150,7 @@ def init_db(db_path: str = DATABASE_PATH):
         "daily_bonus_enabled": "1",
         "daily_bonus_amount": "0.05",
         "proof_channel_id": "",
+        "referral_log_channel_id": "",
         "promo_text": "🎁 انضم إلى أسهل بوت لربح المال وتجميع الدولارات عبر التليجرام! اشترك واستلم هدية التسجيل عبر الرابط التالي:"
     }
 

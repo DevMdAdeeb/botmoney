@@ -145,6 +145,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Check if there is a pending reward before calling reward_referrer_if_pending
+    user_before = database.get_user(user.id)
+    ref_id_before = user_before.get("referred_by") if user_before else None
+
     reward_info = database.reward_referrer_if_pending(user.id)
     if reward_info:
         ref_id, amount = reward_info
@@ -155,6 +159,33 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             pass
+
+        # Post detailed audit report to Referral Log Channel
+        ref_log_ch = database.get_setting("referral_log_channel_id", "")
+        if ref_log_ch:
+            new_u = database.get_user(user.id)
+            ref_u = database.get_user(ref_id)
+
+            new_uname = f"@{new_u['username']}" if new_u and new_u.get('username') else "لا يوجد"
+            ref_uname = f"@{ref_u['username']}" if ref_u and ref_u.get('username') else "لا يوجد"
+
+            log_text = (
+                f"🚨 **تقرير إحالة جديدة (تسجيل عضو جديد)**\n\n"
+                f"👤 **بيانات العضو الجديد:**\n"
+                f"• الاسم: **{new_u['first_name'] if new_u else 'غير معروف'}**\n"
+                f"• المعرف (ID): `{user.id}`\n"
+                f"• اليوزر: {new_uname}\n\n"
+                f"👥 **بيانات صاحب الإحالة (الداعي):**\n"
+                f"• الاسم: **{ref_u['first_name'] if ref_u else 'غير معروف'}**\n"
+                f"• المعرف (ID): `{ref_id}`\n"
+                f"• اليوزر: {ref_uname}\n"
+                f"💰 المكافأة المضافة: `${amount:.2f}`\n\n"
+                f"🔎 *تم التحقق من الحساب وعبر الكابتشا والقنوات بنجاح.*"
+            )
+            try:
+                await context.bot.send_message(chat_id=ref_log_ch, text=log_text, parse_mode="Markdown")
+            except Exception as e:
+                logger.warning(f"Failed to post to referral log channel {ref_log_ch}: {e}")
 
     bot_info = await context.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
@@ -167,6 +198,33 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user.id))
+
+async def send_referral_audit_log(context: ContextTypes.DEFAULT_TYPE, user_id: int, ref_id: int, amount: float):
+    ref_log_ch = database.get_setting("referral_log_channel_id", "")
+    if ref_log_ch:
+        new_u = database.get_user(user_id)
+        ref_u = database.get_user(ref_id)
+
+        new_uname = f"@{new_u['username']}" if new_u and new_u.get('username') else "لا يوجد"
+        ref_uname = f"@{ref_u['username']}" if ref_u and ref_u.get('username') else "لا يوجد"
+
+        log_text = (
+            f"🚨 **تقرير إحالة جديدة (تسجيل عضو جديد)**\n\n"
+            f"👤 **بيانات العضو الجديد:**\n"
+            f"• الاسم: **{new_u['first_name'] if new_u else 'غير معروف'}**\n"
+            f"• المعرف (ID): `{user_id}`\n"
+            f"• اليوزر: {new_uname}\n\n"
+            f"👥 **بيانات صاحب الإحالة (الداعي):**\n"
+            f"• الاسم: **{ref_u['first_name'] if ref_u else 'غير معروف'}**\n"
+            f"• المعرف (ID): `{ref_id}`\n"
+            f"• اليوزر: {ref_uname}\n"
+            f"💰 المكافأة المضافة: `${amount:.2f}`\n\n"
+            f"🔎 *تم التحقق من الحساب وعبر الكابتشا والقنوات بنجاح.*"
+        )
+        try:
+            await context.bot.send_message(chat_id=ref_log_ch, text=log_text, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Failed to post to referral log channel {ref_log_ch}: {e}")
 
 async def captcha_answer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -203,6 +261,7 @@ async def captcha_answer_callback(update: Update, context: ContextTypes.DEFAULT_
             )
         except Exception:
             pass
+        await send_referral_audit_log(context, user.id, ref_id, amount)
 
     bot_info = await context.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
@@ -249,6 +308,7 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
             )
         except Exception:
             pass
+        await send_referral_audit_log(context, user.id, ref_id, amount)
 
     bot_info = await context.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user.id}"

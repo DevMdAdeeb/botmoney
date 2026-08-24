@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
     ADD_TASK_TITLE,
     ADD_TASK_REWARD,
     ADD_TASK_LINK,
-    ADD_TASK_CHAT_ID
-) = range(24)
+    ADD_TASK_CHAT_ID,
+    SET_REF_LOG_CHANNEL_ID
+) = range(25)
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
@@ -161,6 +162,7 @@ async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_
     bonus_on = database.get_setting("daily_bonus_enabled", "1") == "1"
     bonus_amt = database.get_setting("daily_bonus_amount", "0.05")
     proof_ch = database.get_setting("proof_channel_id", "غير محددة")
+    ref_log_ch = database.get_setting("referral_log_channel_id", "غير محددة")
     promo_text = database.get_setting("promo_text", "")
 
     text = (
@@ -169,7 +171,8 @@ async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_
         f"💳 الحد الأدنى للسحب: `${min_withdraw}`\n"
         f"🤖 الكابتشا للأمان: {'مفعلة ✅' if captcha_on else 'معطلة ❌'}\n"
         f"🎁 المكافأة اليومية: {'مفعلة ✅' if bonus_on else 'معطلة ❌'} (قيمة: `${bonus_amt}`)\n"
-        f"📸 قناة الإثباتات: `{proof_ch if proof_ch else 'غير محددة'}`\n\n"
+        f"📸 قناة الإثباتات: `{proof_ch if proof_ch else 'غير محددة'}`\n"
+        f"🚨 قناة مراقبة الإحالات: `{ref_log_ch if ref_log_ch else 'غير محددة'}`\n\n"
         f"📢 **نص المشاركة الفورية:**\n`{promo_text}`\n\n"
         f"📝 **رسالة الترحيب الحالية:**\n{welcome_msg}"
     )
@@ -177,7 +180,7 @@ async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("✏️ تعديل سعر الإحالة", callback_data="change_ref_reward"), InlineKeyboardButton("✏️ تعديل حد السحب الأدنى", callback_data="change_min_withdraw")],
         [InlineKeyboardButton("🤖 " + ("تعطيل الكابتشا" if captcha_on else "تفعيل الكابتشا"), callback_data="toggle_captcha")],
         [InlineKeyboardButton("🎁 " + ("تعطيل المكافأة اليومية" if bonus_on else "تفعيل المكافأة اليومية"), callback_data="toggle_bonus"), InlineKeyboardButton("✏️ قيمة المكافأة اليومية", callback_data="change_bonus_amount")],
-        [InlineKeyboardButton("📸 تحديد قناة إثباتات السحب", callback_data="change_proof_ch")],
+        [InlineKeyboardButton("📸 تحديد قناة إثباتات السحب", callback_data="change_proof_ch"), InlineKeyboardButton("🚨 قناة مراقبة الإحالات", callback_data="change_ref_log_ch")],
         [InlineKeyboardButton("📢 تعديل نص المشاركة الترويجي", callback_data="change_promo_text")],
         [InlineKeyboardButton("✏️ تعديل رسالة الترحيب", callback_data="change_welcome_msg")],
         [InlineKeyboardButton("🔙 العودة للوحة المدير", callback_data="admin_main")]
@@ -187,6 +190,8 @@ async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_
 async def toggle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return
     cur = database.get_setting("captcha_enabled", "1")
     new_val = "0" if cur == "1" else "1"
     database.set_setting("captcha_enabled", new_val)
@@ -195,6 +200,8 @@ async def toggle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_
 async def toggle_bonus_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return
     cur = database.get_setting("daily_bonus_enabled", "1")
     new_val = "0" if cur == "1" else "1"
     database.set_setting("daily_bonus_enabled", new_val)
@@ -203,6 +210,8 @@ async def toggle_bonus_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def prompt_ref_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("💰 **أدخل سعر/مكافأة الإحالة الواحدة الجديد بالدولار ($):**\nمثال: `0.75`")
     return SET_REF_REWARD
 
@@ -220,6 +229,8 @@ async def save_ref_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prompt_min_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("💳 **أدخل الحد الأدنى الجديد للسحب بالدولار ($):**\nمثال: `10.0`")
     return SET_MIN_WITHDRAW
 
@@ -237,6 +248,8 @@ async def save_min_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prompt_bonus_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("🎁 **أدخل قيمة المكافأة اليومية بالدولار ($):**\nمثال: `0.10`")
     return SET_DAILY_BONUS_AMOUNT
 
@@ -254,7 +267,9 @@ async def save_bonus_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prompt_proof_ch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📸 **أدخل معرّف قناة إثباتات السحب التلقائية:**\nمثال: `@myproofchannel` أو المعرف الرقمي `-100123456789`\n(تأكد من إضاف البوت كمشرف في القناة للنشر التلقائي)")
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
+    await query.edit_message_text("📸 **أدخل معرّف قناة إثباتات السحب التلقائية:**\nمثال: `@myproofchannel` أو المعرف الرقمي `-100123456789`\n(تأكد من إضافة البوت كمشرف في القناة للنشر التلقائي)")
     return SET_PROOF_CHANNEL_ID
 
 async def save_proof_ch(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -263,9 +278,25 @@ async def save_proof_ch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ تم تحديد قناة الإثباتات إلى: `{text}`", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
     return ConversationHandler.END
 
+async def prompt_ref_log_ch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
+    await query.edit_message_text("🚨 **أدخل معرّف القناة الخاصة بمراقبة الإحالات ورصد الحسابات:**\nمثال: `@myreferrallog` أو المعرف الرقمي الخفي `-100123456789`\n\nوسيقوم البوت تلقائياً بنشر تقرير مفصل عند كل إحالة جديدة يحتوي (اسم العضو الجديد، يوزره، ID، واسم صاحب الإحالة ويوزره) لمتابعة أي حسابات وهمية!")
+    return SET_REF_LOG_CHANNEL_ID
+
+async def save_ref_log_ch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    database.set_setting("referral_log_channel_id", text)
+    await update.message.reply_text(f"✅ تم تحديد قناة مراقبة الإحالات إلى: `{text}`", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
+    return ConversationHandler.END
+
 async def prompt_promo_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("📢 **أدخل نص الرسالة الترويجية التي تظهر عند ضغط المستخدم على زر المشاركة بنقرة واحدة:**")
     return SET_PROMO_TEXT
 
@@ -278,6 +309,8 @@ async def save_promo_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prompt_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     help_txt = (
         "📝 **أدخل نص رسالة الترحيب الجديدة.**\n\n"
         "يمكنك استخدام المتغيرات التالية وسيقوم البوت باستبدالها تلقائياً:\n"
@@ -319,6 +352,8 @@ async def admin_gift_codes_callback(update: Update, context: ContextTypes.DEFAUL
 
 async def delete_gift_code_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return
     code = query.data.replace("del_gift_", "")
     database.delete_gift_code(code)
     await query.answer("✅ تم حذف الكود بنجاح.", show_alert=True)
@@ -327,6 +362,8 @@ async def delete_gift_code_callback(update: Update, context: ContextTypes.DEFAUL
 async def prompt_add_gift_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("🎁 **أدخل نص الكود** (مثال: `BONUS2026`):")
     return ADD_GIFT_CODE
 
@@ -386,6 +423,8 @@ async def admin_tasks_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def delete_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return
     t_id = int(query.data.replace("del_task_", ""))
     database.delete_task(t_id)
     await query.answer("✅ تم حذف المهمة بنجاح.", show_alert=True)
@@ -394,6 +433,8 @@ async def delete_task_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def prompt_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("🎯 **أدخل عنوان المهمة** (مثال: `اشترك بالقناة واستلم المكافأة`):")
     return ADD_TASK_TITLE
 
@@ -456,6 +497,8 @@ async def admin_channels_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def delete_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return
     ch_id = int(query.data.replace("del_channel_", ""))
     database.remove_channel(ch_id)
     await query.answer("✅ تم حذف القناة بنجاح.", show_alert=True)
@@ -464,6 +507,8 @@ async def delete_channel_callback(update: Update, context: ContextTypes.DEFAULT_
 async def prompt_add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("📢 **يرجى كتابة معرّف القناة** (مثال: `@mychannel` أو معرف رقمي مثل `-100123456789`):\n\n⚠️ *ملاحظة:* تأكد من إضافة البوت كـ مشرف في القناة أولاً لتفعيل التحقق.")
     return ADD_CHANNEL_ID
 
@@ -516,6 +561,8 @@ async def admin_payments_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def delete_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return
     m_id = int(query.data.replace("del_payment_", ""))
     database.remove_payment_method(m_id)
     await query.answer("✅ تم حذف طريقة الدفع بنجاح.", show_alert=True)
@@ -524,6 +571,8 @@ async def delete_payment_callback(update: Update, context: ContextTypes.DEFAULT_
 async def prompt_add_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("💳 **أدخل اسم طريقة الدفع** (مثال: `USDT TRC20`, `Payeer`, `Vodafone Cash`):")
     return ADD_PAYMENT_NAME
 
@@ -571,6 +620,8 @@ async def admin_buttons_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def delete_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return
     b_id = int(query.data.replace("del_button_", ""))
     database.remove_custom_button(b_id)
     await query.answer("✅ تم حذف الزر بنجاح.", show_alert=True)
@@ -579,6 +630,8 @@ async def delete_button_callback(update: Update, context: ContextTypes.DEFAULT_T
 async def prompt_add_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     await query.edit_message_text("🔘 **أدخل عنوان الزر الذي سيظهر للمستخدمين:**")
     return ADD_BTN_TITLE
 
@@ -661,6 +714,8 @@ async def user_searched(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def toggle_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return
     data = query.data
     if data.startswith("ban_"):
         u_id = int(data.replace("ban_", ""))
@@ -674,6 +729,8 @@ async def toggle_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def prompt_modify_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
     u_id = int(query.data.replace("mod_bal_", ""))
     context.user_data["selected_user_id"] = u_id
     await query.edit_message_text(f"💰 **أدخل المبلغ لإضافته أو خصمه من رصيد المستخدم (`{u_id}`):**\n(أدخل رقم موجب للإضافة مثل `5` أو سالب للخصم مثل `-2`)", parse_mode="Markdown")

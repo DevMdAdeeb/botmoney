@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 def main():
     if not BOT_TOKEN:
         print("\n❌ خطأ: لم يتم العثور على توكن البوت (BOT_TOKEN)!")
-        print("يرجى إنشاء ملف باسم `.env` وتحديد التوكن فيه كالتالي:")
-        print("BOT_TOKEN=8853882776:AAHLzNgfwkj187LXWSGMnpgrj4wDhMV6oqU")
-        print("ADMIN_ID=873649941\n")
+        print("يرجى إنشاء ملف باسم `.env` وتحديد التوكن ومعرف المدير فيه كالتالي:")
+        print("BOT_TOKEN=YOUR_BOT_TOKEN_HERE")
+        print("ADMIN_ID=YOUR_TELEGRAM_ID_HERE\n")
         return
 
     # Initialize SQLite Database
@@ -106,6 +106,16 @@ def main():
         per_message=False
     )
     application.add_handler(proof_ch_conv)
+
+    ref_log_ch_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_handlers.prompt_ref_log_ch, pattern="^change_ref_log_ch$")],
+        states={
+            admin_handlers.SET_REF_LOG_CHANNEL_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.save_ref_log_ch)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_handlers.cancel_admin_conv)],
+        per_message=False
+    )
+    application.add_handler(ref_log_ch_conv)
 
     promo_text_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_handlers.prompt_promo_text, pattern="^change_promo_text$")],
