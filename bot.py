@@ -70,6 +70,36 @@ def main():
     )
     application.add_handler(min_withdraw_conv)
 
+    bonus_amount_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_handlers.prompt_bonus_amount, pattern="^change_bonus_amount$")],
+        states={
+            admin_handlers.SET_DAILY_BONUS_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.save_bonus_amount)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_handlers.cancel_admin_conv)],
+        per_message=False
+    )
+    application.add_handler(bonus_amount_conv)
+
+    proof_ch_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_handlers.prompt_proof_ch, pattern="^change_proof_ch$")],
+        states={
+            admin_handlers.SET_PROOF_CHANNEL_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.save_proof_ch)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_handlers.cancel_admin_conv)],
+        per_message=False
+    )
+    application.add_handler(proof_ch_conv)
+
+    promo_text_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_handlers.prompt_promo_text, pattern="^change_promo_text$")],
+        states={
+            admin_handlers.SET_PROMO_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.save_promo_text)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_handlers.cancel_admin_conv)],
+        per_message=False
+    )
+    application.add_handler(promo_text_conv)
+
     welcome_msg_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_handlers.prompt_welcome_msg, pattern="^change_welcome_msg$")],
         states={
@@ -147,8 +177,11 @@ def main():
     # --- Standard Command Handlers ---
     application.add_handler(CommandHandler("start", user_handlers.start_command))
 
-    # --- Callback Query Handlers ---
+    # --- User Callback Query Handlers ---
+    application.add_handler(CallbackQueryHandler(user_handlers.captcha_answer_callback, pattern="^captcha_ans_"))
     application.add_handler(CallbackQueryHandler(user_handlers.check_subscription_callback, pattern="^check_subscription$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.daily_bonus_callback, pattern="^daily_bonus$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.leaderboard_callback, pattern="^leaderboard$"))
     application.add_handler(CallbackQueryHandler(user_handlers.user_profile_callback, pattern="^user_profile$"))
     application.add_handler(CallbackQueryHandler(user_handlers.user_referral_callback, pattern="^user_referral$"))
     application.add_handler(CallbackQueryHandler(user_handlers.user_payment_methods_callback, pattern="^user_payment_methods$"))
@@ -159,6 +192,8 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_main_callback, pattern="^admin_main$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_stats_callback, pattern="^admin_stats$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_settings_callback, pattern="^admin_settings$"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.toggle_captcha_callback, pattern="^toggle_captcha$"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.toggle_bonus_callback, pattern="^toggle_bonus$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_channels_callback, pattern="^admin_channels$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_payments_callback, pattern="^admin_payments$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_buttons_callback, pattern="^admin_buttons$"))

@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
     SET_REF_REWARD,
     SET_MIN_WITHDRAW,
     SET_WELCOME_MSG,
+    SET_DAILY_BONUS_AMOUNT,
+    SET_PROOF_CHANNEL_ID,
+    SET_PROMO_TEXT,
     ADD_CHANNEL_ID,
     ADD_CHANNEL_TITLE,
     ADD_CHANNEL_LINK,
@@ -29,7 +32,7 @@ logger = logging.getLogger(__name__)
     SEARCH_USER,
     MODIFY_USER_BALANCE,
     BROADCAST_MESSAGE
-) = range(14)
+) = range(17)
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
@@ -37,7 +40,7 @@ def is_admin(user_id: int) -> bool:
 def get_admin_dashboard_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("📊 إحصائيات البوت", callback_data="admin_stats")],
-        [InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="admin_settings"), InlineKeyboardButton("📢 القنوات الإجبارية", callback_data="admin_channels")],
+        [InlineKeyboardButton("⚙️ إعدادات البوت العامّة", callback_data="admin_settings"), InlineKeyboardButton("📢 القنوات الإجبارية", callback_data="admin_channels")],
         [InlineKeyboardButton("💳 طرق الدفع", callback_data="admin_payments"), InlineKeyboardButton("🔘 الأزرار الشفافة", callback_data="admin_buttons")],
         [InlineKeyboardButton("👤 إدارة المستخدمين", callback_data="admin_users"), InlineKeyboardButton("📢 إذاعة لجميع الأعضاء", callback_data="admin_broadcast")],
         [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]
@@ -74,7 +77,7 @@ async def admin_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = [[InlineKeyboardButton("🔙 العودة للوحة المدير", callback_data="admin_main")]]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- Withdrawal Approval Handler ---
+# --- Withdrawal Approval Handler with Auto Proof Posting ---
 async def admin_withdrawal_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -87,6 +90,8 @@ async def admin_withdrawal_action_callback(update: Update, context: ContextTypes
         w = database.process_withdrawal_request(w_id, approve=True)
         if w:
             await query.edit_message_text(f"✅ تم **قَبُول** طلب السحب `#{w_id}` بنجاح!", parse_mode="Markdown")
+
+            # Notify User
             try:
                 await context.bot.send_message(
                     chat_id=w["user_id"],
@@ -95,8 +100,31 @@ async def admin_withdrawal_action_callback(update: Update, context: ContextTypes
                 )
             except Exception:
                 pass
+
+            # Auto Post Proof to Proof Channel if configured
+            proof_ch = database.get_setting("proof_channel_id", "")
+            if proof_ch:
+                u = database.get_user(w["user_id"])
+                u_name = u["first_name"] if u else "مستخدم"
+                # Mask user ID for privacy (e.g., 123***78)
+                uid_str = str(w["user_id"])
+                masked_id = uid_str[:3] + "***" + uid_str[-2:] if len(uid_str) > 5 else uid_str
+
+                proof_text = (
+                    f"✅ **إثبات سحب جديد (تم الدفع) 💸**\n\n"
+                    f"👤 المستخدم: **{u_name}** (`{masked_id}`)\n"
+                    f"💳 طريقة الدفع: **{w['payment_method']}**\n"
+                    f"💰 المبلغ المدفوع: `${w['amount']:.2f}`\n"
+                    f"🆔 رقم العملية: `#{w['id']}`\n\n"
+                    f"🔥 اكسب أنت أيضاً ودولارات مجانية عبر البوت!"
+                )
+                try:
+                    await context.bot.send_message(chat_id=proof_ch, text=proof_text, parse_mode="Markdown")
+                except Exception as e:
+                    logger.warning(f"Failed to post proof to channel {proof_ch}: {e}")
+
         else:
-            await query.edit_message_text("❌ لم يتم العثور على الطلب أو أنه مًعالج سابقاً.")
+            await query.edit_message_text("❌ لم يتم العثور على الطلب أو أنه مُعالج سابقاً.")
 
     elif data.startswith("reject_w_"):
         w_id = int(data.replace("reject_w_", ""))
@@ -124,20 +152,48 @@ async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_
     ref_reward = database.get_setting("referral_reward", "0.5")
     min_withdraw = database.get_setting("min_withdrawal", "5.0")
     welcome_msg = database.get_setting("welcome_message")
+    captcha_on = database.get_setting("captcha_enabled", "1") == "1"
+    bonus_on = database.get_setting("daily_bonus_enabled", "1") == "1"
+    bonus_amt = database.get_setting("daily_bonus_amount", "0.05")
+    proof_ch = database.get_setting("proof_channel_id", "غير محددة")
+    promo_text = database.get_setting("promo_text", "")
 
     text = (
         f"⚙️ **إعدادات البوت الحالية:**\n\n"
         f"💰 سعر الإحالة الواحدة: `${ref_reward}`\n"
-        f"💳 الحد الأدنى للسحب: `${min_withdraw}`\n\n"
+        f"💳 الحد الأدنى للسحب: `${min_withdraw}`\n"
+        f"🤖 الكابتشا للأمان: {'مفعلة ✅' if captcha_on else 'معطلة ❌'}\n"
+        f"🎁 المكافأة اليومية: {'مفعلة ✅' if bonus_on else 'معطلة ❌'} (قيمة: `${bonus_amt}`)\n"
+        f"📸 قناة الإثباتات: `{proof_ch if proof_ch else 'غير محددة'}`\n\n"
+        f"📢 **نص المشاركة الفورية:**\n`{promo_text}`\n\n"
         f"📝 **رسالة الترحيب الحالية:**\n{welcome_msg}"
     )
     keyboard = [
-        [InlineKeyboardButton("✏️ تعديل سعر الإحالة", callback_data="change_ref_reward")],
-        [InlineKeyboardButton("✏️ تعديل حد السحب الأدنى", callback_data="change_min_withdraw")],
+        [InlineKeyboardButton("✏️ تعديل سعر الإحالة", callback_data="change_ref_reward"), InlineKeyboardButton("✏️ تعديل حد السحب الأدنى", callback_data="change_min_withdraw")],
+        [InlineKeyboardButton("🤖 " + ("تعطيل الكابتشا" if captcha_on else "تفعيل الكابتشا"), callback_data="toggle_captcha")],
+        [InlineKeyboardButton("🎁 " + ("تعطيل المكافأة اليومية" if bonus_on else "تفعيل المكافأة اليومية"), callback_data="toggle_bonus"), InlineKeyboardButton("✏️ قيمة المكافأة اليومية", callback_data="change_bonus_amount")],
+        [InlineKeyboardButton("📸 تحديد قناة إثباتات السحب", callback_data="change_proof_ch")],
+        [InlineKeyboardButton("📢 تعديل نص المشاركة الترويجي", callback_data="change_promo_text")],
         [InlineKeyboardButton("✏️ تعديل رسالة الترحيب", callback_data="change_welcome_msg")],
         [InlineKeyboardButton("🔙 العودة للوحة المدير", callback_data="admin_main")]
     ]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def toggle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    cur = database.get_setting("captcha_enabled", "1")
+    new_val = "0" if cur == "1" else "1"
+    database.set_setting("captcha_enabled", new_val)
+    await admin_settings_callback(update, context)
+
+async def toggle_bonus_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    cur = database.get_setting("daily_bonus_enabled", "1")
+    new_val = "0" if cur == "1" else "1"
+    database.set_setting("daily_bonus_enabled", new_val)
+    await admin_settings_callback(update, context)
 
 async def prompt_ref_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -171,6 +227,47 @@ async def save_min_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❌ يرجى أدخال رقم صحيح (مثال: 5.0):")
         return SET_MIN_WITHDRAW
+    return ConversationHandler.END
+
+async def prompt_bonus_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🎁 **أدخل قيمة المكافأة اليومية بالدولار ($):**\nمثال: `0.10`")
+    return SET_DAILY_BONUS_AMOUNT
+
+async def save_bonus_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    try:
+        val = float(text)
+        database.set_setting("daily_bonus_amount", str(val))
+        await update.message.reply_text(f"✅ تم تحديث قيمة المكافأة اليومية إلى: `${val}`", reply_markup=get_admin_dashboard_keyboard())
+    except ValueError:
+        await update.message.reply_text("❌ يرجى أدخال رقم صحيح:")
+        return SET_DAILY_BONUS_AMOUNT
+    return ConversationHandler.END
+
+async def prompt_proof_ch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📸 **أدخل معرّف قناة إثباتات السحب التلقائية:**\nمثال: `@myproofchannel` أو المعرف الرقمي `-100123456789`\n(تأكد من إضاف البوت كمشرف في القناة للنشر التلقائي)")
+    return SET_PROOF_CHANNEL_ID
+
+async def save_proof_ch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    database.set_setting("proof_channel_id", text)
+    await update.message.reply_text(f"✅ تم تحديد قناة الإثباتات إلى: `{text}`", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
+    return ConversationHandler.END
+
+async def prompt_promo_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📢 **أدخل نص الرسالة الترويجية التي تظهر عند ضغط المستخدم على زر المشاركة بنقرة واحدة:**")
+    return SET_PROMO_TEXT
+
+async def save_promo_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    database.set_setting("promo_text", text)
+    await update.message.reply_text("✅ تم تحديث النص الترويجي بنجاح!", reply_markup=get_admin_dashboard_keyboard())
     return ConversationHandler.END
 
 async def prompt_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):

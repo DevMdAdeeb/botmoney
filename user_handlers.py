@@ -1,4 +1,6 @@
 import logging
+import random
+import urllib.parse
 from typing import List
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -29,7 +31,6 @@ async def check_user_subscriptions(bot, user_id: int) -> tuple[bool, List[dict]]
                 unsubscribed.append(ch)
         except Exception as e:
             logger.warning(f"Error checking sub for user {user_id} in {ch['chat_id']}: {e}")
-            # If bot cannot check (e.g., chat not found or bot not admin), keep it in unsubscribed or skip depending on policy
             unsubscribed.append(ch)
 
     is_subscribed = (len(unsubscribed) == 0)
@@ -43,9 +44,9 @@ def get_mandatory_sub_keyboard(unsubscribed_channels: List[dict]) -> InlineKeybo
     return InlineKeyboardMarkup(keyboard)
 
 def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    # Build main keyboard with primary actions + dynamic custom buttons added by admin
     keyboard = [
         [InlineKeyboardButton("💰 رصيدي وحسابي", callback_data="user_profile"), InlineKeyboardButton("🔗 رابط الإحالة", callback_data="user_referral")],
+        [InlineKeyboardButton("🎁 المكافأة اليومية", callback_data="daily_bonus"), InlineKeyboardButton("🏆 أوائل الداعين", callback_data="leaderboard")],
         [InlineKeyboardButton("💳 طلب سحب", callback_data="user_withdraw"), InlineKeyboardButton("ℹ️ طرق الدفع المتاحة", callback_data="user_payment_methods")]
     ]
 
@@ -68,11 +69,37 @@ def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(keyboard)
 
+# --- Captcha Helper ---
+def generate_captcha():
+    num1 = random.randint(1, 9)
+    num2 = random.randint(1, 9)
+    correct = num1 + num2
+    wrong1 = correct + random.choice([-2, -1, 1, 2])
+    wrong2 = correct + random.choice([-3, 3, 4])
+    options = [correct, wrong1, wrong2]
+    random.shuffle(options)
+    return num1, num2, correct, options
+
+async def send_captcha_challenge(update_or_query, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    num1, num2, correct, options = generate_captcha()
+    context.user_data["captcha_correct"] = correct
+
+    keyboard = []
+    row = []
+    for opt in options:
+        row.append(InlineKeyboardButton(str(opt), callback_data=f"captcha_ans_{opt}"))
+    keyboard.append(row)
+
+    text = f"🤖 **اختبار الكابتشا للأمان:**\n\nيرجى حل المسألة الحسابية البسيطة التالية لاستخدام البوت:\n\n❓ **{num1} + {num2} = ?**"
+
+    if hasattr(update_or_query, "message") and update_or_query.message:
+        await update_or_query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await update_or_query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    chat_id = update.effective_chat.id
 
-    # Check referral ID from args
     referred_by = None
     if context.args:
         try:
@@ -82,7 +109,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             pass
 
-    # Register user
     database.register_user(
         user_id=user.id,
         first_name=user.first_name,
@@ -93,6 +119,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = database.get_user(user.id)
     if user_data and user_data.get("is_banned"):
         await update.message.reply_text("❌ حسابك محظور من استخدام هذا البوت.")
+        return
+
+    # Check Captcha if enabled
+    captcha_enabled = database.get_setting("captcha_enabled", "1") == "1"
+    if captcha_enabled and not user_data.get("captcha_verified"):
+        await send_captcha_challenge(update, context, user.id)
         return
 
     # Check mandatory subscription
@@ -118,7 +150,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # Send Welcome Message
     bot_info = await context.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
     welcome_fmt = database.get_setting("welcome_message")
@@ -131,26 +162,31 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user.id))
 
-async def check_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def captcha_answer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user = query.from_user
 
-    user_data = database.get_user(user.id)
-    if user_data and user_data.get("is_banned"):
-        await query.edit_message_text("❌ حسابك محظور من استخدام هذا البوت.")
+    ans = int(query.data.replace("captcha_ans_", ""))
+    correct = context.user_data.get("captcha_correct")
+
+    if ans != correct:
+        await query.answer("❌ إجابة خاطئة! أعد المحاولة.", show_alert=True)
+        await send_captcha_challenge(query, context, user.id)
         return
 
+    # Correct Captcha
+    database.set_captcha_verified(user.id)
+    await query.message.reply_text("✅ تمت التحقق من الكابتشا بنجاح!")
+
+    # Check mandatory subscription
     is_subbed, unsubscribed = await check_user_subscriptions(context.bot, user.id)
     if not is_subbed:
         reply_markup = get_mandatory_sub_keyboard(unsubscribed)
-        try:
-            await query.edit_message_text(
-                "❌ لم تقم بالاشتراك في جميع القنوات بعد!\nيرجى الانضمام والضغط على تحقق مرة أخرى:",
-                reply_markup=reply_markup
-            )
-        except Exception:
-            pass
+        await query.message.reply_text(
+            "⚠️ يرجى الانضمام للقنوات التالية ثم الضغط على (تحقق من الاشتراك 🔄):",
+            reply_markup=reply_markup
+        )
         return
 
     # Reward referrer if verified
@@ -176,8 +212,102 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
         ref_link=ref_link
     )
 
+    await query.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user.id))
+
+async def check_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+
+    user_data = database.get_user(user.id)
+    if user_data and user_data.get("is_banned"):
+        await query.edit_message_text("❌ حسابك محظور من استخدام هذا البوت.")
+        return
+
+    is_subbed, unsubscribed = await check_user_subscriptions(context.bot, user.id)
+    if not is_subbed:
+        reply_markup = get_mandatory_sub_keyboard(unsubscribed)
+        try:
+            await query.edit_message_text(
+                "❌ لم تقم بالاشتراك في جميع القنوات بعد!\nيرجى الانضمام والضغط على تحقق مرة أخرى:",
+                reply_markup=reply_markup
+            )
+        except Exception:
+            pass
+        return
+
+    reward_info = database.reward_referrer_if_pending(user.id)
+    if reward_info:
+        ref_id, amount = reward_info
+        try:
+            await context.bot.send_message(
+                chat_id=ref_id,
+                text=f"🎉 انضم مستخدم جديد عبر رابطك!\n💰 تمت إضافة مكافأة الإحالة `${amount}` إلى رصيدك."
+            )
+        except Exception:
+            pass
+
+    bot_info = await context.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
+    welcome_fmt = database.get_setting("welcome_message")
+    user_data = database.get_user(user.id)
+    welcome_text = welcome_fmt.format(
+        name=user.first_name,
+        id=user.id,
+        balance=f"{user_data['balance']:.2f}" if user_data else "0.00",
+        ref_link=ref_link
+    )
+
     await query.message.reply_text("✅ شكراً لاشتراكك! تم تفعيل البوت بنجاح.")
     await query.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user.id))
+
+async def daily_bonus_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+
+    if database.get_setting("daily_bonus_enabled", "1") != "1":
+        await query.answer("⚠️ المكافأة اليومية غير مفعلة حالياً من قبل المدير.", show_alert=True)
+        return
+
+    if not database.can_claim_daily_bonus(user.id):
+        await query.answer("⏳ لقد استلمت مكافأتك اليومية بالفعل! عد بعد 24 ساعة.", show_alert=True)
+        return
+
+    bonus_amount = float(database.get_setting("daily_bonus_amount", "0.05"))
+    database.claim_daily_bonus(user.id, bonus_amount)
+
+    await query.answer(f"🎉 مبروك! حصلت على مكافأة يومية قدرها ${bonus_amount:.2f}", show_alert=True)
+
+    user_data = database.get_user(user.id)
+    text = (
+        f"🎁 **تم استلام المكافأة اليومية!**\n\n"
+        f"💰 القيمة: `${bonus_amount:.2f}`\n"
+        f"💳 رصيدك الحالي: `${user_data['balance']:.2f}`\n\n"
+        f"يمكنك العودة غداً لاستلام المكافأة القادمة 🚀"
+    )
+    keyboard = [[InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]]
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def leaderboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    top_users = database.get_top_referrers(10)
+    text = "🏆 **قائمة أوائل المسوقين والداعين:**\n\n"
+
+    if not top_users:
+        text += "لا يوجد متصدرين حتى الآن."
+    else:
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        for idx, u in enumerate(top_users):
+            medal = medals[idx] if idx < len(medals) else "👤"
+            name = u['first_name']
+            count = u['referrals_count']
+            text += f"{medal} **{name}** — `{count}` إحالة\n"
+
+    keyboard = [[InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]]
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def user_profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -219,6 +349,11 @@ async def user_referral_callback(update: Update, context: ContextTypes.DEFAULT_T
     bot_info = await context.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
     ref_reward = database.get_setting("referral_reward", "0.5")
+    promo_text = database.get_setting("promo_text", "")
+
+    # One-click share URL
+    share_msg = f"{promo_text}\n{ref_link}"
+    share_url = f"https://t.me/share/url?url={urllib.parse.quote(share_msg)}"
 
     text = (
         f"🔗 **رابط الإحالة الخاص بك:**\n\n"
@@ -226,7 +361,11 @@ async def user_referral_callback(update: Update, context: ContextTypes.DEFAULT_T
         f"💰 **المكافأة:** كسب `${ref_reward}` لكل صديق يقوم بالانضمام والاشتراك بقنوات البوت عبر رابطك!\n"
         f"شارك الرابط مع أصدقائك أو في المجموعات وابدأ بكسب المال 🚀"
     )
-    keyboard = [[InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]]
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 مشاركة رابطك بنقرة واحدة", url=share_url)],
+        [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]
+    ]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def user_payment_methods_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -371,7 +510,6 @@ async def amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     method = context.user_data.get("withdraw_method")
     account = context.user_data.get("withdraw_account")
 
-    # Create withdrawal request in DB
     w_id = database.create_withdrawal_request(user_id, method, account, amount)
     if not w_id:
         await update.message.reply_text("❌ حدث خطأ في إنشاء الطلب. يرجى التأكد من رصيدك والمحاولة لاحقاً.")
@@ -388,7 +526,6 @@ async def amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_menu_keyboard(user_id)
     )
 
-    # Notify Admin instantly
     try:
         admin_id = ADMIN_ID
         admin_text = (

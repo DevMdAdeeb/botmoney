@@ -27,6 +27,8 @@ def init_db(db_path: str = DATABASE_PATH):
             referred_by INTEGER,
             referrals_count INTEGER DEFAULT 0,
             is_banned INTEGER DEFAULT 0,
+            captcha_verified INTEGER DEFAULT 0,
+            last_daily_bonus TIMESTAMP,
             joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -82,7 +84,7 @@ def init_db(db_path: str = DATABASE_PATH):
         )
     """)
 
-    # Set default settings if not exist
+    # Default settings
     default_settings = {
         "referral_reward": "0.5",
         "min_withdrawal": "5.0",
@@ -92,7 +94,12 @@ def init_db(db_path: str = DATABASE_PATH):
             "💰 رصيدك: `${balance}`\n\n"
             "🔗 رابط الإحالة الخاص بك:\n`{ref_link}`\n\n"
             "قم بمشاركة رابطك مع أصدقائك واكسب لكل شخص يقوم بالانضمام!"
-        )
+        ),
+        "captcha_enabled": "1", # 1 enabled, 0 disabled
+        "daily_bonus_enabled": "1", # 1 enabled, 0 disabled
+        "daily_bonus_amount": "0.05",
+        "proof_channel_id": "", # Channel chat ID for auto-posting withdrawal proofs
+        "promo_text": "🎁 انضم إلى أسهل بوت لربح المال وتجميع الدولارات عبر التليجرام! اشترك واستلم هدية التسجيل عبر الرابط التالي:"
     }
 
     for key, val in default_settings.items():
@@ -113,7 +120,6 @@ def get_user(user_id: int, db_path: str = DATABASE_PATH) -> Optional[dict]:
     return dict(row) if row else None
 
 def register_user(user_id: int, first_name: str, username: Optional[str], referred_by: Optional[int] = None, db_path: str = DATABASE_PATH) -> bool:
-    """Registers a user if not exists. Returns True if new user registered."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -122,7 +128,6 @@ def register_user(user_id: int, first_name: str, username: Optional[str], referr
         conn.close()
         return False
 
-    # Prevent self-referral or invalid referrer
     if referred_by == user_id:
         referred_by = None
     elif referred_by:
@@ -138,11 +143,14 @@ def register_user(user_id: int, first_name: str, username: Optional[str], referr
     conn.close()
     return True
 
+def set_captcha_verified(user_id: int, db_path: str = DATABASE_PATH):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET captcha_verified = 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
 def reward_referrer_if_pending(user_id: int, db_path: str = DATABASE_PATH) -> Optional[Tuple[int, float]]:
-    """
-    Rewards the referrer once the new user completes subscription checks.
-    Returns (referrer_id, reward_amount) if reward was given, else None.
-    """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -154,23 +162,52 @@ def reward_referrer_if_pending(user_id: int, db_path: str = DATABASE_PATH) -> Op
 
     referrer_id = row[0]
 
-    # Check if reward setting is present
     cursor.execute("SELECT value FROM settings WHERE key = 'referral_reward'")
     sett = cursor.fetchone()
     reward = float(sett[0]) if sett else 0.5
 
-    # Reward referrer
     cursor.execute(
         "UPDATE users SET balance = balance + ?, total_earned = total_earned + ?, referrals_count = referrals_count + 1 WHERE user_id = ?",
         (reward, reward, referrer_id)
     )
-
-    # Clear referred_by so reward is only given once upon verification
     cursor.execute("UPDATE users SET referred_by = NULL WHERE user_id = ?", (user_id,))
 
     conn.commit()
     conn.close()
     return (referrer_id, reward)
+
+def claim_daily_bonus(user_id: int, bonus_amount: float, db_path: str = DATABASE_PATH) -> bool:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET balance = balance + ?, total_earned = total_earned + ?, last_daily_bonus = CURRENT_TIMESTAMP WHERE user_id = ?",
+        (bonus_amount, bonus_amount, user_id)
+    )
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+def can_claim_daily_bonus(user_id: int, db_path: str = DATABASE_PATH) -> bool:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 1 FROM users
+        WHERE user_id = ?
+        AND (last_daily_bonus IS NULL OR datetime(last_daily_bonus, '+1 day') <= datetime('now'))
+    """, (user_id,))
+    can_claim = cursor.fetchone() is not None
+    conn.close()
+    return can_claim
+
+def get_top_referrers(limit: int = 10, db_path: str = DATABASE_PATH) -> List[dict]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, first_name, username, referrals_count, total_earned FROM users ORDER BY referrals_count DESC, total_earned DESC LIMIT ?", (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 def update_user_balance(user_id: int, amount: float, db_path: str = DATABASE_PATH) -> bool:
     conn = sqlite3.connect(db_path)
@@ -328,7 +365,6 @@ def get_all_payment_methods(db_path: str = DATABASE_PATH) -> List[dict]:
 
 # --- Withdrawal Functions ---
 def create_withdrawal_request(user_id: int, payment_method: str, account_details: str, amount: float, db_path: str = DATABASE_PATH) -> Optional[int]:
-    """Creates withdrawal request and deducts user balance atomically."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     try:
@@ -353,10 +389,6 @@ def create_withdrawal_request(user_id: int, payment_method: str, account_details
         conn.close()
 
 def process_withdrawal_request(withdrawal_id: int, approve: bool, db_path: str = DATABASE_PATH) -> Optional[dict]:
-    """
-    Approves or rejects withdrawal. If rejected, refunds user balance.
-    Returns the withdrawal record.
-    """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -372,7 +404,6 @@ def process_withdrawal_request(withdrawal_id: int, approve: bool, db_path: str =
         cursor.execute("UPDATE withdrawals SET status = ? WHERE id = ?", (new_status, withdrawal_id))
 
         if not approve:
-            # Refund user balance
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (w_dict["amount"], w_dict["user_id"]))
 
         conn.commit()
