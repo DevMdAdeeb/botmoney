@@ -160,32 +160,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # Post detailed audit report to Referral Log Channel
-        ref_log_ch = database.get_setting("referral_log_channel_id", "")
-        if ref_log_ch:
-            new_u = database.get_user(user.id)
-            ref_u = database.get_user(ref_id)
-
-            new_uname = f"@{new_u['username']}" if new_u and new_u.get('username') else "لا يوجد"
-            ref_uname = f"@{ref_u['username']}" if ref_u and ref_u.get('username') else "لا يوجد"
-
-            log_text = (
-                f"🚨 **تقرير إحالة جديدة (تسجيل عضو جديد)**\n\n"
-                f"👤 **بيانات العضو الجديد:**\n"
-                f"• الاسم: **{new_u['first_name'] if new_u else 'غير معروف'}**\n"
-                f"• المعرف (ID): `{user.id}`\n"
-                f"• اليوزر: {new_uname}\n\n"
-                f"👥 **بيانات صاحب الإحالة (الداعي):**\n"
-                f"• الاسم: **{ref_u['first_name'] if ref_u else 'غير معروف'}**\n"
-                f"• المعرف (ID): `{ref_id}`\n"
-                f"• اليوزر: {ref_uname}\n"
-                f"💰 المكافأة المضافة: `${amount:.2f}`\n\n"
-                f"🔎 *تم التحقق من الحساب وعبر الكابتشا والقنوات بنجاح.*"
-            )
-            try:
-                await context.bot.send_message(chat_id=ref_log_ch, text=log_text, parse_mode="Markdown")
-            except Exception as e:
-                logger.warning(f"Failed to post to referral log channel {ref_log_ch}: {e}")
+        await send_referral_audit_log(context, user.id, ref_id, amount)
 
     bot_info = await context.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
@@ -199,23 +174,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user.id))
 
+def clean_md(text: str) -> str:
+    """Escapes Markdown formatting characters like underscores and asterisks."""
+    if not text:
+        return ""
+    return str(text).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+
 async def send_referral_audit_log(context: ContextTypes.DEFAULT_TYPE, user_id: int, ref_id: int, amount: float):
     ref_log_ch = database.get_setting("referral_log_channel_id", "")
     if ref_log_ch:
         new_u = database.get_user(user_id)
         ref_u = database.get_user(ref_id)
 
-        new_uname = f"@{new_u['username']}" if new_u and new_u.get('username') else "لا يوجد"
-        ref_uname = f"@{ref_u['username']}" if ref_u and ref_u.get('username') else "لا يوجد"
+        new_fname = clean_md(new_u['first_name']) if new_u and new_u.get('first_name') else "غير معروف"
+        new_uname = f"@{clean_md(new_u['username'])}" if new_u and new_u.get('username') else "لا يوجد"
+
+        ref_fname = clean_md(ref_u['first_name']) if ref_u and ref_u.get('first_name') else "غير معروف"
+        ref_uname = f"@{clean_md(ref_u['username'])}" if ref_u and ref_u.get('username') else "لا يوجد"
 
         log_text = (
             f"🚨 **تقرير إحالة جديدة (تسجيل عضو جديد)**\n\n"
             f"👤 **بيانات العضو الجديد:**\n"
-            f"• الاسم: **{new_u['first_name'] if new_u else 'غير معروف'}**\n"
+            f"• الاسم: **{new_fname}**\n"
             f"• المعرف (ID): `{user_id}`\n"
             f"• اليوزر: {new_uname}\n\n"
             f"👥 **بيانات صاحب الإحالة (الداعي):**\n"
-            f"• الاسم: **{ref_u['first_name'] if ref_u else 'غير معروف'}**\n"
+            f"• الاسم: **{ref_fname}**\n"
             f"• المعرف (ID): `{ref_id}`\n"
             f"• اليوزر: {ref_uname}\n"
             f"💰 المكافأة المضافة: `${amount:.2f}`\n\n"

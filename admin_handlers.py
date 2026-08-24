@@ -112,14 +112,16 @@ async def admin_withdrawal_action_callback(update: Update, context: ContextTypes
             proof_ch = database.get_setting("proof_channel_id", "")
             if proof_ch:
                 u = database.get_user(w["user_id"])
-                u_name = u["first_name"] if u else "مستخدم"
+                raw_name = u["first_name"] if u and u.get("first_name") else "مستخدم"
+                u_name = raw_name.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+                pay_method = str(w['payment_method']).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
                 uid_str = str(w["user_id"])
                 masked_id = uid_str[:3] + "***" + uid_str[-2:] if len(uid_str) > 5 else uid_str
 
                 proof_text = (
                     f"✅ **إثبات سحب جديد (تم الدفع) 💸**\n\n"
                     f"👤 المستخدم: **{u_name}** (`{masked_id}`)\n"
-                    f"💳 طريقة الدفع: **{w['payment_method']}**\n"
+                    f"💳 طريقة الدفع: **{pay_method}**\n"
                     f"💰 المبلغ المدفوع: `${w['amount']:.2f}`\n"
                     f"🆔 رقم العملية: `#{w['id']}`\n\n"
                     f"🔥 اكسب أنت أيضاً ودولارات مجانية عبر البوت!"
