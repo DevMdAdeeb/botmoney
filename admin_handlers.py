@@ -151,6 +151,11 @@ async def admin_withdrawal_action_callback(update: Update, context: ContextTypes
             await query.edit_message_text("❌ لم يتم العثور على الطلب أو أنه مُعالج سابقاً.")
 
 # --- Settings Management ---
+def clean_md(text: str) -> str:
+    if not text:
+        return ""
+    return str(text).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+
 async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -167,15 +172,19 @@ async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_
     ref_log_ch = database.get_setting("referral_log_channel_id", "غير محددة")
     promo_text = database.get_setting("promo_text", "")
 
+    safe_proof_ch = clean_md(proof_ch) if proof_ch else "غير محددة"
+    safe_ref_log_ch = clean_md(ref_log_ch) if ref_log_ch else "غير محددة"
+    safe_promo_text = clean_md(promo_text)
+
     text = (
         f"⚙️ **إعدادات البوت الحالية:**\n\n"
         f"💰 سعر الإحالة الواحدة: `${ref_reward}`\n"
         f"💳 الحد الأدنى للسحب: `${min_withdraw}`\n"
         f"🤖 الكابتشا للأمان: {'مفعلة ✅' if captcha_on else 'معطلة ❌'}\n"
         f"🎁 المكافأة اليومية: {'مفعلة ✅' if bonus_on else 'معطلة ❌'} (قيمة: `${bonus_amt}`)\n"
-        f"📸 قناة الإثباتات: `{proof_ch if proof_ch else 'غير محددة'}`\n"
-        f"🚨 قناة مراقبة الإحالات: `{ref_log_ch if ref_log_ch else 'غير محددة'}`\n\n"
-        f"📢 **نص المشاركة الفورية:**\n`{promo_text}`\n\n"
+        f"📸 قناة الإثباتات: `{safe_proof_ch}`\n"
+        f"🚨 قناة مراقبة الإحالات: `{safe_ref_log_ch}`\n\n"
+        f"📢 **نص المشاركة الفورية:**\n{safe_promo_text}\n\n"
         f"📝 **رسالة الترحيب الحالية:**\n{welcome_msg}"
     )
     keyboard = [
@@ -187,7 +196,15 @@ async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("✏️ تعديل رسالة الترحيب", callback_data="change_welcome_msg")],
         [InlineKeyboardButton("🔙 العودة للوحة المدير", callback_data="admin_main")]
     ]
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception:
+        # Fallback without parse_mode if welcome_msg or setting text contains custom invalid Markdown entities
+        plain_text = text.replace("**", "").replace("`", "")
+        try:
+            await query.edit_message_text(plain_text, reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            logger.error(f"Error displaying admin settings: {e}")
 
 async def toggle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
