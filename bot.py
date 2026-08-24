@@ -56,6 +56,16 @@ def main():
     )
     application.add_handler(withdraw_conv)
 
+    gift_code_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(user_handlers.prompt_gift_code, pattern="^enter_gift_code$")],
+        states={
+            user_handlers.ENTER_GIFT_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, user_handlers.redeem_gift_code_handler)]
+        },
+        fallbacks=[CommandHandler("cancel", user_handlers.cancel_withdraw_callback)],
+        per_message=False
+    )
+    application.add_handler(gift_code_conv)
+
     # --- Admin Settings Conversation Handlers ---
     ref_reward_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_handlers.prompt_ref_reward, pattern="^change_ref_reward$")],
@@ -117,6 +127,32 @@ def main():
     )
     application.add_handler(welcome_msg_conv)
 
+    # Add Gift Code Conv
+    add_gift_code_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_handlers.prompt_add_gift_code, pattern="^add_gift_code$")],
+        states={
+            admin_handlers.ADD_GIFT_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.gift_code_entered)],
+            admin_handlers.ADD_GIFT_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.gift_reward_entered)],
+            admin_handlers.ADD_GIFT_MAX: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.gift_max_entered)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_handlers.cancel_admin_conv)],
+        per_message=False
+    )
+    application.add_handler(add_gift_code_conv)
+
+    # Add Task Conv
+    add_task_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_handlers.prompt_add_task, pattern="^add_task$")],
+        states={
+            admin_handlers.ADD_TASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_title_entered)],
+            admin_handlers.ADD_TASK_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_reward_entered)],
+            admin_handlers.ADD_TASK_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handlers.task_link_entered)]
+        },
+        fallbacks=[CommandHandler("cancel", admin_handlers.cancel_admin_conv)],
+        per_message=False
+    )
+    application.add_handler(add_task_conv)
+
     # Add Mandatory Channel Conv
     add_channel_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_handlers.prompt_add_channel, pattern="^add_channel$")],
@@ -170,7 +206,7 @@ def main():
     )
     application.add_handler(user_mgmt_conv)
 
-    # Broadcast Conv
+    # All-Media Broadcast Conv
     broadcast_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_handlers.admin_broadcast_callback, pattern="^admin_broadcast$")],
         states={
@@ -187,6 +223,8 @@ def main():
     # --- User Callback Query Handlers ---
     application.add_handler(CallbackQueryHandler(user_handlers.captcha_answer_callback, pattern="^captcha_ans_"))
     application.add_handler(CallbackQueryHandler(user_handlers.check_subscription_callback, pattern="^check_subscription$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.user_tasks_callback, pattern="^user_tasks$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.claim_task_callback, pattern="^claim_task_"))
     application.add_handler(CallbackQueryHandler(user_handlers.daily_bonus_callback, pattern="^daily_bonus$"))
     application.add_handler(CallbackQueryHandler(user_handlers.leaderboard_callback, pattern="^leaderboard$"))
     application.add_handler(CallbackQueryHandler(user_handlers.user_profile_callback, pattern="^user_profile$"))
@@ -199,6 +237,8 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_main_callback, pattern="^admin_main$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_stats_callback, pattern="^admin_stats$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_settings_callback, pattern="^admin_settings$"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.admin_gift_codes_callback, pattern="^admin_gift_codes$"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.admin_tasks_callback, pattern="^admin_tasks$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.toggle_captcha_callback, pattern="^toggle_captcha$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.toggle_bonus_callback, pattern="^toggle_bonus$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_channels_callback, pattern="^admin_channels$"))
@@ -206,6 +246,8 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_buttons_callback, pattern="^admin_buttons$"))
 
     # Admin Action Callbacks
+    application.add_handler(CallbackQueryHandler(admin_handlers.delete_gift_code_callback, pattern="^del_gift_"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.delete_task_callback, pattern="^del_task_"))
     application.add_handler(CallbackQueryHandler(admin_handlers.delete_channel_callback, pattern="^del_channel_"))
     application.add_handler(CallbackQueryHandler(admin_handlers.delete_payment_callback, pattern="^del_payment_"))
     application.add_handler(CallbackQueryHandler(admin_handlers.delete_button_callback, pattern="^del_button_"))

@@ -31,8 +31,14 @@ logger = logging.getLogger(__name__)
     ADD_BTN_VALUE,
     SEARCH_USER,
     MODIFY_USER_BALANCE,
-    BROADCAST_MESSAGE
-) = range(17)
+    BROADCAST_MESSAGE,
+    ADD_GIFT_CODE,
+    ADD_GIFT_REWARD,
+    ADD_GIFT_MAX,
+    ADD_TASK_TITLE,
+    ADD_TASK_REWARD,
+    ADD_TASK_LINK
+) = range(23)
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
@@ -40,7 +46,8 @@ def is_admin(user_id: int) -> bool:
 def get_admin_dashboard_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("📊 إحصائيات البوت", callback_data="admin_stats")],
-        [InlineKeyboardButton("⚙️ إعدادات البوت العامّة", callback_data="admin_settings"), InlineKeyboardButton("📢 القنوات الإجبارية", callback_data="admin_channels")],
+        [InlineKeyboardButton("⚙️ الإعدادات العامة", callback_data="admin_settings"), InlineKeyboardButton("📢 القنوات الإجبارية", callback_data="admin_channels")],
+        [InlineKeyboardButton("🎯 إدارة المهام", callback_data="admin_tasks"), InlineKeyboardButton("🎁 أكواد الهدايا", callback_data="admin_gift_codes")],
         [InlineKeyboardButton("💳 طرق الدفع", callback_data="admin_payments"), InlineKeyboardButton("🔘 الأزرار الشفافة", callback_data="admin_buttons")],
         [InlineKeyboardButton("👤 إدارة المستخدمين", callback_data="admin_users"), InlineKeyboardButton("📢 إذاعة لجميع الأعضاء", callback_data="admin_broadcast")],
         [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]
@@ -55,7 +62,7 @@ async def admin_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     await query.edit_message_text(
-        "🛠️ **لوحة تحكم المدير الشاملة**\n\nاختر الخيار الذي تريد التحكم به من الأسفل:",
+        "🛠️ **لوحة تحكم المدير الشاملة والمنظمة**\n\nاختر الخيار الذي تريد التحكم به من الأسفل:",
         parse_mode="Markdown",
         reply_markup=get_admin_dashboard_keyboard()
     )
@@ -91,7 +98,6 @@ async def admin_withdrawal_action_callback(update: Update, context: ContextTypes
         if w:
             await query.edit_message_text(f"✅ تم **قَبُول** طلب السحب `#{w_id}` بنجاح!", parse_mode="Markdown")
 
-            # Notify User
             try:
                 await context.bot.send_message(
                     chat_id=w["user_id"],
@@ -101,12 +107,10 @@ async def admin_withdrawal_action_callback(update: Update, context: ContextTypes
             except Exception:
                 pass
 
-            # Auto Post Proof to Proof Channel if configured
             proof_ch = database.get_setting("proof_channel_id", "")
             if proof_ch:
                 u = database.get_user(w["user_id"])
                 u_name = u["first_name"] if u else "مستخدم"
-                # Mask user ID for privacy (e.g., 123***78)
                 uid_str = str(w["user_id"])
                 masked_id = uid_str[:3] + "***" + uid_str[-2:] if len(uid_str) > 5 else uid_str
 
@@ -290,6 +294,132 @@ async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ تم تحديث رسالة الترحيب بنجاح!", reply_markup=get_admin_dashboard_keyboard())
     return ConversationHandler.END
 
+# --- Gift Codes Management ---
+async def admin_gift_codes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+
+    codes = database.get_all_gift_codes()
+    text = "🎁 **إدارة أكواد الهدايا:**\n\n"
+    keyboard = []
+
+    if not codes:
+        text += "لا توجد أكواد هدايا مضافة حالياً."
+    else:
+        for c in codes:
+            text += f"• الكود: `{c['code']}` | المكافأة: `${c['reward']:.2f}` | الاستخدام: `{c['used_count']}/{c['max_uses']}`\n"
+            keyboard.append([InlineKeyboardButton(f"❌ حذف الكود {c['code']}", callback_data=f"del_gift_{c['code']}")])
+
+    keyboard.append([InlineKeyboardButton("➕ إنشاء كود هدية جديد", callback_data="add_gift_code")])
+    keyboard.append([InlineKeyboardButton("🔙 العودة للوحة المدير", callback_data="admin_main")])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def delete_gift_code_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    code = query.data.replace("del_gift_", "")
+    database.delete_gift_code(code)
+    await query.answer("✅ تم حذف الكود بنجاح.", show_alert=True)
+    await admin_gift_codes_callback(update, context)
+
+async def prompt_add_gift_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🎁 **أدخل نص الكود** (مثال: `BONUS2026`):")
+    return ADD_GIFT_CODE
+
+async def gift_code_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    code = update.message.text.strip()
+    context.user_data["add_gift_code"] = code
+    await update.message.reply_text("💰 **أدخل قيمة هدية الكود بالدولار ($):** (مثال: `0.50`)")
+    return ADD_GIFT_REWARD
+
+async def gift_reward_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        reward = float(update.message.text.strip())
+        context.user_data["add_gift_reward"] = reward
+        await update.message.reply_text("👥 **أدخل أقصى عدد أشخاص يمكنهم استخدام الكود:** (مثال: `100`)")
+        return ADD_GIFT_MAX
+    except ValueError:
+        await update.message.reply_text("❌ أدخل رقم صحيح للمكافأة:")
+        return ADD_GIFT_REWARD
+
+async def gift_max_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        max_uses = int(update.message.text.strip())
+        code = context.user_data.get("add_gift_code")
+        reward = context.user_data.get("add_gift_reward")
+
+        success = database.create_gift_code(code, reward, max_uses)
+        if success:
+            await update.message.reply_text(f"✅ تم إنشاء كود الهدية `{code}` بمكافأة `${reward:.2f}` لعدد `{max_uses}` مستخدمين!", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
+        else:
+            await update.message.reply_text("❌ الكود موجود بالفعل.", reply_markup=get_admin_dashboard_keyboard())
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ أدخل عدد صحيح للمستخدمين:")
+        return ADD_GIFT_MAX
+
+# --- Tasks Management ---
+async def admin_tasks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+
+    tasks = database.get_all_tasks()
+    text = "🎯 **إدارة المهام الإضافية:**\n\n"
+    keyboard = []
+
+    if not tasks:
+        text += "لا توجد مهام مضافة حالياً."
+    else:
+        for t in tasks:
+            text += f"• **{t['title']}** | المكافأة: `${t['reward']:.2f}`\n🔗 {t['link']}\n\n"
+            keyboard.append([InlineKeyboardButton(f"❌ حذف {t['title']}", callback_data=f"del_task_{t['id']}")])
+
+    keyboard.append([InlineKeyboardButton("➕ إضافة مهمة جديدة", callback_data="add_task")])
+    keyboard.append([InlineKeyboardButton("🔙 العودة للوحة المدير", callback_data="admin_main")])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def delete_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    t_id = int(query.data.replace("del_task_", ""))
+    database.delete_task(t_id)
+    await query.answer("✅ تم حذف المهمة بنجاح.", show_alert=True)
+    await admin_tasks_callback(update, context)
+
+async def prompt_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🎯 **أدخل عنوان المهمة** (مثال: `اشترك بالقناة واستلم المكافأة`):")
+    return ADD_TASK_TITLE
+
+async def task_title_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    title = update.message.text.strip()
+    context.user_data["add_task_title"] = title
+    await update.message.reply_text("💰 **أدخل مكافأة تنفيذ المهمة بالدولار ($):** (مثال: `0.10`)")
+    return ADD_TASK_REWARD
+
+async def task_reward_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        reward = float(update.message.text.strip())
+        context.user_data["add_task_reward"] = reward
+        await update.message.reply_text("🔗 **أدخل رابط المهمة** (مثال: `https://t.me/mychannel`):")
+        return ADD_TASK_LINK
+    except ValueError:
+        await update.message.reply_text("❌ أدخل قيمة رقمية صالحة:")
+        return ADD_TASK_REWARD
+
+async def task_link_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    link = update.message.text.strip()
+    title = context.user_data.get("add_task_title")
+    reward = context.user_data.get("add_task_reward")
+
+    database.add_task(title, reward, link)
+    await update.message.reply_text(f"✅ تم إضافة المهمة **{title}** بنجاح!", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
+    return ConversationHandler.END
 
 # --- Mandatory Channels Management ---
 async def admin_channels_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -315,10 +445,9 @@ async def admin_channels_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def delete_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     ch_id = int(query.data.replace("del_channel_", ""))
     database.remove_channel(ch_id)
-    await query.edit_message_text("✅ تم حذف القناة بنجاح.")
+    await query.answer("✅ تم حذف القناة بنجاح.", show_alert=True)
     await admin_channels_callback(update, context)
 
 async def prompt_add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -351,7 +480,6 @@ async def channel_link_entered(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ هذه القناة مضافة بالفعل أو حدث خطأ.", reply_markup=get_admin_dashboard_keyboard())
     return ConversationHandler.END
 
-
 # --- Payment Methods Management ---
 async def admin_payments_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -377,10 +505,10 @@ async def admin_payments_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def delete_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     m_id = int(query.data.replace("del_payment_", ""))
     database.remove_payment_method(m_id)
-    await query.edit_message_text("✅ تم حذف طريقة الدفع بنجاح.")
+    await query.answer("✅ تم حذف طريقة الدفع بنجاح.", show_alert=True)
+    await admin_payments_callback(update, context)
 
 async def prompt_add_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -407,7 +535,6 @@ async def payment_inst_entered(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ طريقة الدفع مضافة سابقاً.", reply_markup=get_admin_dashboard_keyboard())
     return ConversationHandler.END
 
-
 # --- Custom Inline Buttons Management ---
 async def admin_buttons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -433,10 +560,10 @@ async def admin_buttons_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def delete_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     b_id = int(query.data.replace("del_button_", ""))
     database.remove_custom_button(b_id)
-    await query.edit_message_text("✅ تم حذف الزر بنجاح.")
+    await query.answer("✅ تم حذف الزر بنجاح.", show_alert=True)
+    await admin_buttons_callback(update, context)
 
 async def prompt_add_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -475,7 +602,6 @@ async def btn_value_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     database.add_custom_button(title, btn_type, val)
     await update.message.reply_text(f"✅ تم إضافة الزر الشفاف **{title}** بنجاح!", parse_mode="Markdown", reply_markup=get_admin_dashboard_keyboard())
     return ConversationHandler.END
-
 
 # --- User Management ---
 async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -554,15 +680,14 @@ async def save_modified_balance(update: Update, context: ContextTypes.DEFAULT_TY
         return MODIFY_USER_BALANCE
     return ConversationHandler.END
 
-
-# --- Broadcast Management ---
+# --- All-Media Universal Broadcast Handler ---
 async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not is_admin(query.from_user.id):
         return
 
-    await query.edit_message_text("📢 **أرسل الرسالة (نص، صورة، فيديو...) التي تريد توجيها/إرسالها لجميع أعضاء البوت:**")
+    await query.edit_message_text("📢 **أرسل الرسالة الآن** (تدعم النص، الصور، الفيديو، الصوتي، الملاحظات الصوتية، الملصقات، وغيرها) لإرسالها لجميع أعضاء البوت:")
     return BROADCAST_MESSAGE
 
 async def perform_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -577,13 +702,14 @@ async def perform_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await msg.copy(chat_id=u["user_id"])
             success += 1
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Broadcast failed for user {u['user_id']}: {e}")
             failed += 1
 
     await status_msg.edit_text(
-        f"✅ **تم الانتهاء من الإذاعة!**\n\n"
-        f"🟢 نجح الإرسال إلى: `{success}`\n"
-        f"🔴 فشل الإرسال إلى: `{failed}`",
+        f"✅ **تم الانتهاء من الإذاعة الشاملة!**\n\n"
+        f"🟢 نجح الإرسال إلى: `{success}` مستخدم\n"
+        f"🔴 فشل الإرسال إلى: `{failed}` مستخدم",
         parse_mode="Markdown",
         reply_markup=get_admin_dashboard_keyboard()
     )

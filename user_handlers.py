@@ -16,8 +16,9 @@ from config import ADMIN_ID
 
 logger = logging.getLogger(__name__)
 
-# States for conversation handler (Withdrawal Flow)
+# States for conversation handler
 SELECT_PAYMENT_METHOD, ENTER_ACCOUNT, ENTER_AMOUNT = range(3)
+ENTER_GIFT_CODE = 3
 
 async def check_user_subscriptions(bot, user_id: int) -> tuple[bool, List[dict]]:
     """Checks if the user is subscribed to all mandatory channels."""
@@ -46,11 +47,11 @@ def get_mandatory_sub_keyboard(unsubscribed_channels: List[dict]) -> InlineKeybo
 def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("💰 رصيدي وحسابي", callback_data="user_profile"), InlineKeyboardButton("🔗 رابط الإحالة", callback_data="user_referral")],
+        [InlineKeyboardButton("🎯 المهام اليومية", callback_data="user_tasks"), InlineKeyboardButton("🎁 كود الهدية", callback_data="enter_gift_code")],
         [InlineKeyboardButton("🎁 المكافأة اليومية", callback_data="daily_bonus"), InlineKeyboardButton("🏆 أوائل الداعين", callback_data="leaderboard")],
         [InlineKeyboardButton("💳 طلب سحب", callback_data="user_withdraw"), InlineKeyboardButton("ℹ️ طرق الدفع المتاحة", callback_data="user_payment_methods")]
     ]
 
-    # Custom inline buttons added by admin
     custom_btns = database.get_all_custom_buttons()
     row = []
     for btn in custom_btns:
@@ -65,11 +66,10 @@ def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
         keyboard.append(row)
 
     if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("⚙️ لوحة تحكم المدير", callback_data="admin_main")])
+        keyboard.append([InlineKeyboardButton("⚙️ لوحة تحكم المدير الشاملة", callback_data="admin_main")])
 
     return InlineKeyboardMarkup(keyboard)
 
-# --- Captcha Helper ---
 def generate_captcha():
     num1 = random.randint(1, 9)
     num2 = random.randint(1, 9)
@@ -121,13 +121,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ حسابك محظور من استخدام هذا البوت.")
         return
 
-    # Check Captcha if enabled
     captcha_enabled = database.get_setting("captcha_enabled", "1") == "1"
     if captcha_enabled and not user_data.get("captcha_verified"):
         await send_captcha_challenge(update, context, user.id)
         return
 
-    # Check mandatory subscription
     is_subbed, unsubscribed = await check_user_subscriptions(context.bot, user.id)
     if not is_subbed:
         reply_markup = get_mandatory_sub_keyboard(unsubscribed)
@@ -138,7 +136,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Reward referrer if verified
     reward_info = database.reward_referrer_if_pending(user.id)
     if reward_info:
         ref_id, amount = reward_info
@@ -175,11 +172,9 @@ async def captcha_answer_callback(update: Update, context: ContextTypes.DEFAULT_
         await send_captcha_challenge(query, context, user.id)
         return
 
-    # Correct Captcha
     database.set_captcha_verified(user.id)
-    await query.message.reply_text("✅ تمت التحقق من الكابتشا بنجاح!")
+    await query.message.reply_text("✅ تم التحقق من الكابتشا بنجاح!")
 
-    # Check mandatory subscription
     is_subbed, unsubscribed = await check_user_subscriptions(context.bot, user.id)
     if not is_subbed:
         reply_markup = get_mandatory_sub_keyboard(unsubscribed)
@@ -189,7 +184,6 @@ async def captcha_answer_callback(update: Update, context: ContextTypes.DEFAULT_
         )
         return
 
-    # Reward referrer if verified
     reward_info = database.reward_referrer_if_pending(user.id)
     if reward_info:
         ref_id, amount = reward_info
@@ -261,6 +255,53 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
     await query.message.reply_text("✅ شكراً لاشتراكك! تم تفعيل البوت بنجاح.")
     await query.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user.id))
 
+# --- Gift Code Flow ---
+async def prompt_gift_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🎁 **أدخل كود الهدية الذي حصلت عليه:**")
+    return ENTER_GIFT_CODE
+
+async def redeem_gift_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    code_text = update.message.text.strip()
+    user_id = update.effective_user.id
+
+    success, message, amount = database.redeem_gift_code(user_id, code_text)
+    await update.message.reply_text(message, reply_markup=get_main_menu_keyboard(user_id))
+    return ConversationHandler.END
+
+# --- Micro-Tasks Flow ---
+async def user_tasks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    tasks = database.get_available_tasks_for_user(user_id)
+    text = "🎯 **المهام الإضافية المتاحة للكسب:**\n\n"
+    keyboard = []
+
+    if not tasks:
+        text += "لا توجد مهام جديدة متاحة حالياً. أعد التفقد لاحقاً!"
+    else:
+        for t in tasks:
+            text += f"🔹 **{t['title']}**\n💰 المكافأة: `${t['reward']:.2f}`\n\n"
+            keyboard.append([InlineKeyboardButton(f"🚀 تنفيذ: {t['title']}", url=t['link'])])
+            keyboard.append([InlineKeyboardButton(f"✅ تأكيد استلام `${t['reward']:.2f}`", callback_data=f"claim_task_{t['id']}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def claim_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    task_id = int(query.data.replace("claim_task_", ""))
+    success, msg, amount = database.complete_task(user_id, task_id)
+
+    await query.answer(msg, show_alert=True)
+    await user_tasks_callback(update, context)
+
 async def daily_bonus_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -325,8 +366,8 @@ async def user_profile_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     ref_reward = database.get_setting("referral_reward", "0.5")
     text = (
-        f"👤 **معلومات حسابك:**\n\n"
-        f"🆔 المعرف: `{u['user_id']}`\n"
+        f"👤 **معلومات حسابك الشخصي:**\n\n"
+        f"🆔 المعرف الرقمي: `{u['user_id']}`\n"
         f"👤 الاسم: {u['first_name']}\n"
         f"💰 الرصيد الحالي: `${u['balance']:.2f}`\n"
         f"💵 إجمالي الأرباح: `${u['total_earned']:.2f}`\n"
@@ -351,7 +392,6 @@ async def user_referral_callback(update: Update, context: ContextTypes.DEFAULT_T
     ref_reward = database.get_setting("referral_reward", "0.5")
     promo_text = database.get_setting("promo_text", "")
 
-    # One-click share URL
     share_msg = f"{promo_text}\n{ref_link}"
     share_url = f"https://t.me/share/url?url={urllib.parse.quote(share_msg)}"
 
@@ -550,5 +590,5 @@ async def amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel_withdraw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("❌ تم إلغاء طلب السحب.", reply_markup=get_main_menu_keyboard(query.from_user.id))
+    await query.edit_message_text("❌ تم إلغاء العملية.", reply_markup=get_main_menu_keyboard(query.from_user.id))
     return ConversationHandler.END

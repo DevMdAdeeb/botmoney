@@ -92,21 +92,64 @@ def init_db(db_path: str = DATABASE_PATH):
         )
     """)
 
+    # Gift Codes table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gift_codes (
+            code TEXT PRIMARY KEY,
+            reward REAL NOT NULL,
+            max_uses INTEGER NOT NULL,
+            used_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # User Used Codes table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_used_codes (
+            user_id INTEGER NOT NULL,
+            code TEXT NOT NULL,
+            used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, code)
+        )
+    """)
+
+    # Tasks table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            reward REAL NOT NULL,
+            link TEXT NOT NULL,
+            chat_id TEXT, -- optional chat_id for channel sub check
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # User Completed Tasks table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_completed_tasks (
+            user_id INTEGER NOT NULL,
+            task_id INTEGER NOT NULL,
+            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, task_id)
+        )
+    """)
+
     # Default settings
     default_settings = {
         "referral_reward": "0.5",
         "min_withdrawal": "5.0",
         "welcome_message": (
-            "مرحباً بك يا {name} في بوت الربح! 🚀\n\n"
+            "مرحباً بك يا {name} في بوت الربح الشهير! 🚀\n\n"
             "🆔 معرفك: `{id}`\n"
             "💰 رصيدك: `${balance}`\n\n"
             "🔗 رابط الإحالة الخاص بك:\n`{ref_link}`\n\n"
             "قم بمشاركة رابطك مع أصدقائك واكسب لكل شخص يقوم بالانضمام!"
         ),
-        "captcha_enabled": "1", # 1 enabled, 0 disabled
-        "daily_bonus_enabled": "1", # 1 enabled, 0 disabled
+        "captcha_enabled": "1",
+        "daily_bonus_enabled": "1",
         "daily_bonus_amount": "0.05",
-        "proof_channel_id": "", # Channel chat ID for auto-posting withdrawal proofs
+        "proof_channel_id": "",
         "promo_text": "🎁 انضم إلى أسهل بوت لربح المال وتجميع الدولارات عبر التليجرام! اشترك واستلم هدية التسجيل عبر الرابط التالي:"
     }
 
@@ -369,6 +412,141 @@ def get_all_payment_methods(db_path: str = DATABASE_PATH) -> List[dict]:
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# --- Gift Codes Functions ---
+def create_gift_code(code: str, reward: float, max_uses: int, db_path: str = DATABASE_PATH) -> bool:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO gift_codes (code, reward, max_uses) VALUES (?, ?, ?)", (code, reward, max_uses))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+def delete_gift_code(code: str, db_path: str = DATABASE_PATH) -> bool:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM gift_codes WHERE code = ?", (code,))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+def get_all_gift_codes(db_path: str = DATABASE_PATH) -> List[dict]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM gift_codes")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def redeem_gift_code(user_id: int, code: str, db_path: str = DATABASE_PATH) -> Tuple[bool, str, float]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        # Check code exists
+        cursor.execute("SELECT * FROM gift_codes WHERE code = ?", (code,))
+        gc = cursor.fetchone()
+        if not gc:
+            conn.close()
+            return False, "❌ كود الهدية هذا غير صحيح أو انتهت صلاحيته.", 0.0
+
+        if gc["used_count"] >= gc["max_uses"]:
+            conn.close()
+            return False, "❌ تم استنفاد هذا الكود ولم يعد متاحاً.", 0.0
+
+        # Check user already used code
+        cursor.execute("SELECT 1 FROM user_used_codes WHERE user_id = ? AND code = ?", (user_id, code))
+        if cursor.fetchone():
+            conn.close()
+            return False, "⚠️ لقد قمت باستخدام كود الهدية هذا سابقاً!", 0.0
+
+        reward = gc["reward"]
+        cursor.execute("UPDATE gift_codes SET used_count = used_count + 1 WHERE code = ?", (code,))
+        cursor.execute("INSERT INTO user_used_codes (user_id, code) VALUES (?, ?)", (user_id, code))
+        cursor.execute("UPDATE users SET balance = balance + ?, total_earned = total_earned + ? WHERE user_id = ?", (reward, reward, user_id))
+
+        conn.commit()
+        return True, f"🎉 مبروك! تم استخدام الكود بنجاح وإضافة `${reward:.2f}` إلى رصيدك.", reward
+    except Exception as e:
+        conn.rollback()
+        return False, "❌ حدث خطأ أثناء معالجة كود الهدية.", 0.0
+    finally:
+        conn.close()
+
+
+# --- Micro-Tasks Functions ---
+def add_task(title: str, reward: float, link: str, chat_id: Optional[str] = None, db_path: str = DATABASE_PATH) -> bool:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO tasks (title, reward, link, chat_id) VALUES (?, ?, ?, ?)", (title, reward, link, chat_id))
+    conn.commit()
+    conn.close()
+    return True
+
+def delete_task(task_id: int, db_path: str = DATABASE_PATH) -> bool:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+def get_all_tasks(db_path: str = DATABASE_PATH) -> List[dict]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_available_tasks_for_user(user_id: int, db_path: str = DATABASE_PATH) -> List[dict]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT t.* FROM tasks t
+        LEFT JOIN user_completed_tasks uct ON t.id = uct.task_id AND uct.user_id = ?
+        WHERE uct.task_id IS NULL
+    """, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def complete_task(user_id: int, task_id: int, db_path: str = DATABASE_PATH) -> Tuple[bool, str, float]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        t = cursor.fetchone()
+        if not t:
+            conn.close()
+            return False, "❌ المهام غير موجودة.", 0.0
+
+        cursor.execute("SELECT 1 FROM user_completed_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
+        if cursor.fetchone():
+            conn.close()
+            return False, "⚠️ لقد قمت بإكمال هذه المهمة بالفعل!", 0.0
+
+        reward = t["reward"]
+        cursor.execute("INSERT INTO user_completed_tasks (user_id, task_id) VALUES (?, ?)", (user_id, task_id))
+        cursor.execute("UPDATE users SET balance = balance + ?, total_earned = total_earned + ? WHERE user_id = ?", (reward, reward, user_id))
+        conn.commit()
+        return True, f"🎉 مبروك! تمت إضافة مكافأة المهمة `${reward:.2f}` إلى رصيدك.", reward
+    except Exception:
+        conn.rollback()
+        return False, "❌ حدث خطأ أثناء إكمال المهمة.", 0.0
+    finally:
+        conn.close()
 
 
 # --- Withdrawal Functions ---
